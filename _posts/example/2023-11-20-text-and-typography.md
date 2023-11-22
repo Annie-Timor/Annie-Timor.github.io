@@ -3,7 +3,7 @@ title: Text and Typography
 author: cotes
 date: 2019-08-08 11:33:00 +0800
 categories: [Blogging, Demo]
-tags: [typography]
+tags: [example]
 pin: true
 math: true
 mermaid: true
@@ -14,6 +14,7 @@ This post is to show Markdown syntax rendering on [**Chirpy**](https://github.co
 ## Headings
 
 # H1 - heading
+
 {: .mt-4 .mb-0 }
 
 ## H2 - heading

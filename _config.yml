@@ -23,7 +23,7 @@ description: >- # used by seo meta and the atom feed
 
 # Fill in the protocol & hostname for your site.
 # e.g. 'https://username.github.io', note that it does not end with a '/'.
-url: "https://annie-timor.github.io/"
+url: "https://lxh007.top"
 
 github:
   username: Annie-Timor # change to your github username
@@ -38,6 +38,7 @@ social:
   email: cnlixinghui@gmail.com # change to your email address
   links:
     # The first element serves as the copyright owner's link
+    - https://lxh007.top/
     - https://twitter.com/xxx # change to your twitter homepage
     - https://github.com/Annie-Timor # change to your github homepage
     # Uncomment below to add more social links

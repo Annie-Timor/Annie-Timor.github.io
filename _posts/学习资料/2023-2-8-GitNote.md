@@ -183,6 +183,14 @@ git push -u origin master
 git push origin master
 ```
 
+需要强制推送的使用：
+
+```sh
+git push origin master --force
+```
+
+Git 会强制将本地提交覆盖远程仓库上的对应分支的提交历史，这意味着远程仓库将会完全匹配本地仓库的状态，而不考虑它们之间的差异。
+
 ### 19、克隆远程仓库
 
 ```sh

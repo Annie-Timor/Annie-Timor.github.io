@@ -3,7 +3,7 @@ title: 基于SysTick的us级延时
 author: lixinghui
 date: 2023-6-15 12:00:00 +0800
 categories: [mcu]
-tags: [mcu]
+tags: [嵌入式杂谈]
 ---
 
 

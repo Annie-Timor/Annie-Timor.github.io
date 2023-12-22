@@ -3,7 +3,7 @@ title: 按键扫描程序修改版
 author: lixinghui
 date: 2023-5-23 12:00:00 +0800
 categories: [mcu]
-tags: [mcu]
+tags: [嵌入式杂谈]
 ---
 
 

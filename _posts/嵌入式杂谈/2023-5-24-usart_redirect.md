@@ -3,7 +3,7 @@ title: 串口重定向
 author: lixinghui
 date: 2023-5-24 12:00:00 +0800
 categories: [mcu]
-tags: [mcu]
+tags: [嵌入式杂谈]
 ---
 
 

@@ -116,7 +116,7 @@ T       │   S│       U
    这里仅仅是麦克风的输出电压，转换到数字信号还需要考虑到ADC的影响。
 ```
 
-关于数字麦克风请参考ADI的文章，[《理解麦克风的灵敏度》](./理解麦克风的灵敏度.pdf)
+关于数字麦克风请参考ADI的文章，[《理解麦克风的灵敏度》](https://www.analog.com/cn/resources/analog-dialogue/articles/understanding-microphone-sensitivity.html)
 
 ### 4、数字信号的计算
 

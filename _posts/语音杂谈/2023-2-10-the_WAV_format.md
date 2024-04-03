@@ -77,11 +77,11 @@ WAV 扩展
 
 > 以下代码为自行添加，非原文内容。仅是最简单的short型wav文件读取，如输入的文件不是该类型，请修改相关代码。
 
-**wav_read.h**
+**wav_pcm16.h**
 
 ```c
-#ifndef WAV_READ_H
-#define WAV_READ_H
+#ifndef WAV_PCM16_H
+#define WAV_PCM16_H
 
 #include <stdio.h>
 
@@ -122,10 +122,10 @@ int WAV_WriteBuffer(FILE *fp_in, const short *buf, int n);
 
 ```
 
-**wav_read.c**
+**wav_pcm16.c**
 
 ```c
-#include "wav_read.h"
+#include "wav_pcm16.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -331,20 +331,592 @@ int WAV_WriteBuffer(FILE *fp_in, const short *buf, int n)
 }
 ```
 
-**main.c**
+**wav_pcm24.h**
 
 ```c
-#include ".\wav_read\wav_read.h"
+#ifndef WAV_PCM24_H
+#define WAV_PCM24_H
+
+#include <stdio.h>
+
+#define PRINT_WAV_HEADER 1
+#define WAVE_HEADER_SIZE 44
+
+#define ONLY_FOR_LITTLE_ENDIAN
+
+/*little endian*/
+typedef struct
+{
+    /*file_size=chunk_size+8=sub_chunk_size+44*/
+    /*fmt_chunk_size=0x10,defines format information
+    for audio data at address 0x14~0x23*/
+    char file_format[4];   // "RIFF"
+    int chunk_size;        // =sub_chunk_size+36
+    char form_type[4];     // "WAVE"
+    char fmt[4];           // "fmt "
+    int fmt_size;          // fmt chunk size=0x10
+    short audio_format;    // 01=PCM
+    short channels;        // channel number,1/2
+    int sample_rate;       // sample rate,8000/16000/44100
+    int byte_rate;         // SampleRate * Channels * BitsPerSample / 8
+    short byte_per_sample; // BitsPerSample*Channels/8
+    short bit_per_sample;  // 8/16/32
+    char data[4];          // "data"
+    int sub_chunk_size;    // =file_size-44
+} WAV_HEADER;
+
+int WAV_AnalyzeHeader(FILE *fp_in, WAV_HEADER *h);
+int WAV_FillHeader(WAV_HEADER *h, int sample_rate, int channels, int data_size);
+int WAV_WriteHeader(FILE *fp_in, WAV_HEADER *h);
+int WAV_ReadBuffer(FILE *fp_in, int *buf, int n);
+short *WAV_ReadAll(FILE *fp_in, int *n);
+short *WAV_ReadAll2(FILE *fp_in, WAV_HEADER *h, int *n);
+int WAV_WriteBuffer(FILE *fp_in, const int *buf, int n);
+#endif // !WAV_READ_H
+```
+
+**wav_pcm24.c**
+
+```c
+#include "wav_pcm24.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct
+{
+    int value : 24;
+} Int24;
+
+/**
+ * @brief Analyze header file contents
+ *
+ * @param fp_in :input file point
+ * @param h : wav head struct point
+ * @return -1:input is null,0:success
+ */
+int WAV_AnalyzeHeader(FILE *fp_in, WAV_HEADER *h)
+{
+    if ((fp_in == NULL) || (h == NULL))
+    {
+        // !handle error
+        return -1;
+    }
+
+    fseek(fp_in, 0, SEEK_SET);
+    /*both the little endian~*/
+    fread(h, WAVE_HEADER_SIZE, 1, fp_in);
+
+#if PRINT_WAV_HEADER
+    printf("---------------------------------------------\n");
+    printf("----------------Analyze start----------------\n");
+    printf("1-File fomat:%.4s\n", h->file_format);
+    printf("2-chunk size:%d bytes\n", h->chunk_size);
+    printf("3-Form Type:%.4s\n", h->form_type);
+    printf("4-%.4s size:", h->fmt);
+    printf("%d bytes\n", h->fmt_size);
+    printf("5-Audio Format:%s\n", h->audio_format == 1 ? "PCM" : "other");
+    printf("6-Channels:%d\n", h->channels);
+    printf("7-Sample Rate:%d\n", h->sample_rate);
+    printf("8-Byte Rate(SampleRate * Channels * BitsPerSample / 8):%d\n", h->byte_rate);
+    printf("9-Bytes Per Sample:%d\n", h->byte_per_sample);
+    printf("10-Bits Per Sample:%d\n", h->bit_per_sample);
+    printf("11-%.4s:", h->data);
+    printf("%d bytes\n", h->sub_chunk_size);
+    printf("-----------------Analyze end-----------------\n");
+    printf("---------------------------------------------\n");
+#endif
+
+    return 0;
+}
+
+/**
+ * @brief fill the wav header
+ *
+ * @param h : the wav head struct point
+ * @param sample_rate : sample_rate
+ * @param channels : number of channels
+ * @param data_size : number of data count,not the bytes
+ * @return 0 on success, -1 on failure
+ */
+int WAV_FillHeader(WAV_HEADER *h, int sample_rate, int channels, int data_size)
+{
+    if (h == NULL)
+    {
+        // !handle empty
+        return -1;
+    }
+
+    unsigned int total_size = data_size * 3;
+    memcpy(h->file_format, "RIFF", 4);
+    h->chunk_size = total_size + 36;
+    memcpy(h->form_type, "WAVE", 4);
+    memcpy(h->fmt, "fmt ", 4);
+    h->fmt_size = 16;
+    h->audio_format = 1;
+    h->channels = channels;
+    h->sample_rate = sample_rate;
+    h->byte_rate = sample_rate * channels * 24 / 8;
+    h->byte_per_sample = 3;
+    h->bit_per_sample = 24;
+    memcpy(h->data, "data", 4);
+    h->sub_chunk_size = total_size;
+
+    return 0;
+}
+
+/**
+ * @brief write the header to the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param h :the input WAV head
+ * @return int -1:fp_in or head is NULL,-2:write error,0:correct
+ */
+int WAV_WriteHeader(FILE *fp_in, WAV_HEADER *h)
+{
+    int ret = -2;
+    if ((fp_in == NULL) || (h == NULL))
+    {
+        // !handle empty input
+        return -1;
+    }
+    fseek(fp_in, 0, SEEK_SET);
+    if (WAVE_HEADER_SIZE == fwrite(h, WAVE_HEADER_SIZE, 1, fp_in))
+    {
+        ret = 0;
+    }
+
+    return ret;
+}
+
+/**
+ * @brief read N buffers from the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param buf :the buffer to read
+ * @param n :N
+ * @return int -1:read error,0:correct
+ */
+int WAV_ReadBuffer(FILE *fp_in, int *buf, int n)
+{
+    int i;
+    int read_data = 0;
+    Int24 rd = {0};
+    for (i = 0; i < n; i++)
+    {
+        if (fread(&rd, 3, 1, fp_in) != 1)
+        {
+            break;
+        }
+        
+        buf[i] = rd.value;
+    }
+
+    if (i != n)
+    {
+        return -1;
+    }
+    return 0;
+}
+
+#if 0
+/**
+ * @brief read all buffers from the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param n :the input WAV file buffers number
+ * @return short* return the data
+ */
+short *WAV_ReadAll(FILE *fp_in, int *n)
+{
+    unsigned char head[4] = {0};
+    unsigned int size = 0;
+    unsigned char *audio_read = NULL;
+    fseek(fp_in, WAVE_HEADER_SIZE - 4, SEEK_SET);
+    fread(head, sizeof(char), 4, fp_in);
+    size = head[0] + head[1] * 256 + head[2] * 256 * 256 + head[3] * 256 * 256 * 256;
+    audio_read = (unsigned char *)malloc(size);
+    memset(audio_read, 0, size);
+    fseek(fp_in, WAVE_HEADER_SIZE, SEEK_SET);
+    if (fread(audio_read, sizeof(char), size, fp_in) != size)
+    {
+        free(audio_read);
+        return NULL;
+    }
+    *n = size / 2;
+    return ((short *)audio_read);
+}
+
+
+/**
+ * @brief read all buffers from the input WAV file
+ *
+ * @param fp_in the input WAV file ponit
+ * @param h the wav file head point
+ * @param n the wav buffer read (short type)
+ * @return short* data buffer or NULL
+ */
+short *WAV_ReadAll2(FILE *fp_in, WAV_HEADER *h, int *n)
+{
+    if ((fp_in == NULL) || (h == NULL))
+    {
+        // !handle empty
+        return NULL;
+    }
+
+    fseek(fp_in, 0, SEEK_END);
+    long file_size = ftell(fp_in);
+    long audio_size = file_size - WAVE_HEADER_SIZE;
+    long num_sample = audio_size / (h->channels * (h->bit_per_sample / 8));
+    fseek(fp_in, 0, SEEK_SET);
+    short *buf = (short *)malloc(num_sample * sizeof(short));
+    if (fread(buf, sizeof(short), num_sample, fp_in) != num_sample)
+    {
+        free(buf);
+        return NULL;
+    }
+    *n = num_sample;
+    return buf;
+}
+#endif
+
+/**
+ * @brief write data to the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param buf :the wav data
+ * @param n :data number
+ * @return int 0 on success, -1 on failure
+ */
+int WAV_WriteBuffer(FILE *fp_in, const int *buf, int n)
+{
+    if ((fp_in == NULL) || (buf == NULL))
+    {
+        // !handle empty input
+        return -1;
+    }
+    Int24 wd = {0};
+    for (int i = 0; i < n; i++)
+    {
+        wd.value = buf[i];
+        fwrite(&wd, 3, 1, fp_in);
+    }
+    return 0;
+}
+```
+
+**wav_pcm32.h**
+
+```c
+#ifndef WAV_PCM32_H
+#define WAV_PCM32_H
+
+#include <stdio.h>
+
+#define PRINT_WAV_HEADER 1
+#define WAVE_HEADER_SIZE 44
+
+#define ONLY_FOR_LITTLE_ENDIAN
+
+/*little endian*/
+typedef struct
+{
+    /*file_size=chunk_size+8=sub_chunk_size+44*/
+    /*fmt_chunk_size=0x10,defines format information
+    for audio data at address 0x14~0x23*/
+    char file_format[4];   // "RIFF"
+    int chunk_size;        // =sub_chunk_size+36
+    char form_type[4];     // "WAVE"
+    char fmt[4];           // "fmt "
+    int fmt_size;          // fmt chunk size=0x10
+    short audio_format;    // 01=PCM
+    short channels;        // channel number,1/2
+    int sample_rate;       // sample rate,8000/16000/44100
+    int byte_rate;         // SampleRate * Channels * BitsPerSample / 8
+    short byte_per_sample; // BitsPerSample*Channels/8
+    short bit_per_sample;  // 8/16/32
+    char data[4];          // "data"
+    int sub_chunk_size;    // =file_size-44
+} WAV_HEADER;
+
+int WAV_AnalyzeHeader(FILE *fp_in, WAV_HEADER *h);
+int WAV_FillHeader(WAV_HEADER *h, int sample_rate, int channels, int data_size);
+int WAV_WriteHeader(FILE *fp_in, WAV_HEADER *h);
+int WAV_ReadBuffer(FILE *fp_in, int *buf, int n);
+int *WAV_ReadAll(FILE *fp_in, int *n);
+int *WAV_ReadAll2(FILE *fp_in, WAV_HEADER *h, int *n);
+int WAV_WriteBuffer(FILE *fp_in, const int *buf, int n);
+#endif // !WAV_READ_H
+```
+
+**wav_pcm32.c**
+
+```c
+#include "wav_pcm32.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/**
+ * @brief Analyze header file contents
+ *
+ * @param fp_in :input file point
+ * @param h : wav head struct point
+ * @return -1:input is null,0:success
+ */
+int WAV_AnalyzeHeader(FILE *fp_in, WAV_HEADER *h)
+{
+    if ((fp_in == NULL) || (h == NULL))
+    {
+        // !handle error
+        return -1;
+    }
+
+    fseek(fp_in, 0, SEEK_SET);
+    /*both the little endian~*/
+    fread(h, WAVE_HEADER_SIZE, 1, fp_in);
+
+#if PRINT_WAV_HEADER
+    printf("---------------------------------------------\n");
+    printf("----------------Analyze start----------------\n");
+    printf("1-File fomat:%.4s\n", h->file_format);
+    printf("2-chunk size:%d bytes\n", h->chunk_size);
+    printf("3-Form Type:%.4s\n", h->form_type);
+    printf("4-%.4s size:", h->fmt);
+    printf("%d bytes\n", h->fmt_size);
+    printf("5-Audio Format:%s\n", h->audio_format == 1 ? "PCM" : "other");
+    printf("6-Channels:%d\n", h->channels);
+    printf("7-Sample Rate:%d\n", h->sample_rate);
+    printf("8-Byte Rate(SampleRate * Channels * BitsPerSample / 8):%d\n", h->byte_rate);
+    printf("9-Bytes Per Sample:%d\n", h->byte_per_sample);
+    printf("10-Bits Per Sample:%d\n", h->bit_per_sample);
+    printf("11-%.4s:", h->data);
+    printf("%d bytes\n", h->sub_chunk_size);
+    printf("-----------------Analyze end-----------------\n");
+    printf("---------------------------------------------\n");
+#endif
+
+    return 0;
+}
+
+/**
+ * @brief fill the wav header
+ *
+ * @param h : the wav head struct point
+ * @param sample_rate : sample_rate
+ * @param channels : number of channels
+ * @param data_size : number of data count,not the bytes
+ * @return 0 on success, -1 on failure
+ */
+int WAV_FillHeader(WAV_HEADER *h, int sample_rate, int channels, int data_size)
+{
+    if (h == NULL)
+    {
+        // !handle empty
+        return -1;
+    }
+
+    unsigned int total_size = data_size * 4;
+    memcpy(h->file_format, "RIFF", 4);
+    h->chunk_size = total_size + 36;
+    memcpy(h->form_type, "WAVE", 4);
+    memcpy(h->fmt, "fmt ", 4);
+    h->fmt_size = 16;
+    h->audio_format = 1;
+    h->channels = channels;
+    h->sample_rate = sample_rate;
+    h->byte_rate = sample_rate * channels * 32 / 8;
+    h->byte_per_sample = 4;
+    h->bit_per_sample = 32;
+    memcpy(h->data, "data", 4);
+    h->sub_chunk_size = total_size;
+
+    return 0;
+}
+
+/**
+ * @brief write the header to the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param h :the input WAV head
+ * @return int -1:fp_in or head is NULL,-2:write error,0:correct
+ */
+int WAV_WriteHeader(FILE *fp_in, WAV_HEADER *h)
+{
+    int ret = -2;
+    if ((fp_in == NULL) || (h == NULL))
+    {
+        // !handle empty input
+        return -1;
+    }
+    fseek(fp_in, 0, SEEK_SET);
+    if (WAVE_HEADER_SIZE == fwrite(h, WAVE_HEADER_SIZE, 1, fp_in))
+    {
+        ret = 0;
+    }
+
+    return ret;
+}
+
+/**
+ * @brief read N buffers from the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param buf :the buffer to read
+ * @param n :N
+ * @return int -1:read error,0:correct
+ */
+int WAV_ReadBuffer(FILE *fp_in, int *buf, int n)
+{
+    int read_size = 0;
+
+    read_size = fread(buf, sizeof(int), n, fp_in);
+    if (read_size != n)
+    {
+        return -1;
+    }
+
+    return 0;
+}
+
+#if 1
+/**
+ * @brief read all buffers from the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param n :the input WAV file buffers number
+ * @return short* return the data
+ */
+int *WAV_ReadAll(FILE *fp_in, int *n)
+{
+    unsigned char head[4] = {0};
+    unsigned int size = 0;
+    unsigned char *audio_read = NULL;
+    fseek(fp_in, WAVE_HEADER_SIZE - 4, SEEK_SET);
+    fread(head, sizeof(char), 4, fp_in);
+    size = head[0] + head[1] * 256 + head[2] * 256 * 256 + head[3] * 256 * 256 * 256;
+    audio_read = (unsigned char *)malloc(size);
+    memset(audio_read, 0, size);
+    fseek(fp_in, WAVE_HEADER_SIZE, SEEK_SET);
+    if (fread(audio_read, sizeof(char), size, fp_in) != size)
+    {
+        free(audio_read);
+        return NULL;
+    }
+    *n = size / 4;
+    return ((int *)audio_read);
+}
+
+/**
+ * @brief read all buffers from the input WAV file
+ *
+ * @param fp_in the input WAV file ponit
+ * @param h the wav file head point
+ * @param n the wav buffer read (short type)
+ * @return short* data buffer or NULL
+ */
+int *WAV_ReadAll2(FILE *fp_in, WAV_HEADER *h, int *n)
+{
+    if ((fp_in == NULL) || (h == NULL))
+    {
+        // !handle empty
+        return NULL;
+    }
+
+    fseek(fp_in, 0, SEEK_END);
+    long file_size = ftell(fp_in);
+    long audio_size = file_size - WAVE_HEADER_SIZE;
+    long num_sample = audio_size / (h->channels * (h->bit_per_sample / 8));
+    fseek(fp_in, 0, SEEK_SET);
+    int *buf = (int *)malloc(num_sample * sizeof(int));
+    if (fread(buf, sizeof(int), num_sample, fp_in) != num_sample)
+    {
+        free(buf);
+        return NULL;
+    }
+    *n = num_sample;
+    return buf;
+}
+#endif
+
+/**
+ * @brief write data to the input WAV file
+ *
+ * @param fp_in :the input WAV file ponit
+ * @param buf :the wav data
+ * @param n :data number
+ * @return int 0 on success, -1 on failure
+ */
+int WAV_WriteBuffer(FILE *fp_in, const int *buf, int n)
+{
+    if ((fp_in == NULL) || (buf == NULL))
+    {
+        // !handle empty input
+        return -1;
+    }
+    fwrite(buf, sizeof(int), n, fp_in);
+    return 0;
+}
+```
+
+**test_main.c**
+
+```c
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define USER_READ_ALL 0
-#define USER_READ_BUFFER 1
+#define TEST_PCM16 0
+#define TEST_PCM24 0
+#define TEST_PCM32 1
 
-#define FRAME_SIZE 128
+#if TEST_PCM16
+#include "wav_pcm16.h"
+#endif
+
+#if TEST_PCM24
+#include "wav_pcm24.h"
+#endif
+
+#if TEST_PCM32
+#include "wav_pcm32.h"
+#endif
+
+#define FRAME_SIZE 960
+#define FS (48000)
+#define CHANNELS (1)
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+void pcm16_data_init(short *buffer, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        buffer[i] = 1024 * sinf(2 * M_PI * 1000 * i / 48000);
+    }
+}
+
+void pcm24_data_init(int *buffer, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        buffer[i] = 1024 * 256 * sinf(2 * M_PI * 1000 * i / 48000);
+    }
+}
+
+void pcm32_data_init(int *buffer, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        buffer[i] = 1024 * 256 * 256 * sinf(2 * M_PI * 1000 * i / 48000);
+    }
+}
+
+#if TEST_PCM16
 
 int main(int argc, char **argv)
 {
@@ -355,72 +927,214 @@ int main(int argc, char **argv)
 
     /* only read 16bit integer */
     short *read_data = NULL;
-    WAV_HEAD header = {0};
+    short *write_data = NULL;
+    WAV_HEADER header = {0};
     int frame_cnt = 0;
     int n = 0;
 
-    /*Determine whether there are input parameters*/
-    if (argc < 2)
-    {
-        /*give the fixed parameter*/
-        file_in = "./wav/B11_250.wav";
-        file_out = "./wav/B11_250_cp.wav";
-    }
-    else
-    {
-        file_in = argv[1];
-        file_out = argv[2];
-    }
+    /*give the fixed parameter*/
+    file_in = "TT.wav";
+    file_out = "TT.wav";
 
     /*open the wav file*/
-    fp_in = fopen(file_in, "rb");
     fp_out = fopen(file_out, "wb");
-
-    if ((!fp_in) || (!fp_out))
+    if (!fp_out)
     {
-        printf("Error: Could not open file %s or %s \n", file_in, file_out);
+        printf("Error: Could not open file %s \n", file_out);
         return -1;
     }
-#if USER_READ_BUFFER
-    read_data = malloc(FRAME_SIZE * sizeof(short));
-    // memset(read_data, 0, FRAME_SIZE * sizeof(short));
-#endif
 
-    /*analyze the input wav head*/
-    WAV_AnalyzeHead(fp_in, &header);
+    read_data = malloc(CHANNELS * FRAME_SIZE * sizeof(short));
+    write_data = malloc(CHANNELS * FRAME_SIZE * sizeof(short));
+    pcm16_data_init(write_data, CHANNELS * FRAME_SIZE);
 
-#if USER_READ_ALL
-    read_data = WAV_ReadAll2(fp_in, &header, &n);
-    fseek(fp_out, WAVE_HEAD_SIZE, SEEK_SET);
-    WAV_WriteBuffer(fp_out, read_data, n);
-#endif
-
-#if USER_READ_BUFFER
-    fseek(fp_in, WAVE_HEAD_SIZE, SEEK_SET);
-    fseek(fp_out, WAVE_HEAD_SIZE, SEEK_SET);
-    while (0 == WAV_ReadBuffer(fp_in, read_data, FRAME_SIZE))
+    fseek(fp_out, WAVE_HEADER_SIZE, SEEK_SET);
+    frame_cnt = 0;
+    for (int i = 0; i < 10; i++)
     {
-        WAV_WriteBuffer(fp_out, read_data, FRAME_SIZE);
+
+        WAV_WriteBuffer(fp_out, write_data, CHANNELS * FRAME_SIZE);
         frame_cnt++;
     }
-    n = FRAME_SIZE * frame_cnt;
+    WAV_FillHeader(&header, FS, CHANNELS, frame_cnt * CHANNELS * FRAME_SIZE);
+    WAV_WriteHeader(fp_out, &header);
+    fclose(fp_out);
+
+    fp_in = fopen(file_in, "rb");
+    if (!fp_in)
+    {
+        printf("Error: Could not open file %s \n", file_in);
+        return -1;
+    }
+
+    /*analyze the input wav head*/
+    WAV_AnalyzeHeader(fp_in, &header);
+
+    fseek(fp_in, WAVE_HEADER_SIZE, SEEK_SET);
+
+    WAV_ReadBuffer(fp_in, read_data, CHANNELS * FRAME_SIZE);
+
+    FILE *fp = fopen("1.txt", "w");
+    for (int i = 0; i < FRAME_SIZE; i++)
+    {
+        fprintf(fp, "%5d,%5d\n", write_data[i], read_data[i]);
+    }
+
+    fclose(fp_in);
+    fclose(fp);
+    free(read_data);
+    free(write_data);
+
+    printf("process done\n");
+    return 0;
+}
 #endif
 
-    printf("total read %d data\n", n);
+#if TEST_PCM24
 
-    // header.sub_chunk_size = n * 2;
-    // header.chunk_size = header.sub_chunk_size + 36;
-    WAV_FillHead(&header, header.sample_rate, header.channels, n);
-    WAV_WriteHead(fp_out, &header);
-    WAV_AnalyzeHead(fp_out, &header);
+int main(int argc, char **argv)
+{
+    char *file_in = NULL;
+    char *file_out = NULL;
+    FILE *fp_in = NULL;
+    FILE *fp_out = NULL;
 
-    free(read_data);
-    fclose(fp_in);
+    /* only read 16bit integer */
+    int *read_data = NULL;
+    int *write_data = NULL;
+    WAV_HEADER header = {0};
+    int frame_cnt = 0;
+    int n = 0;
+
+    /*give the fixed parameter*/
+    file_in = "TT.wav";
+    file_out = "TT.wav";
+
+    /*open the wav file*/
+    fp_out = fopen(file_out, "wb");
+    if (!fp_out)
+    {
+        printf("Error: Could not open file %s \n", file_out);
+        return -1;
+    }
+
+    read_data = malloc(CHANNELS * FRAME_SIZE * sizeof(int));
+    write_data = malloc(CHANNELS * FRAME_SIZE * sizeof(int));
+    pcm24_data_init(write_data, CHANNELS * FRAME_SIZE);
+
+    fseek(fp_out, WAVE_HEADER_SIZE, SEEK_SET);
+    frame_cnt = 0;
+    for (int i = 0; i < 10; i++)
+    {
+        WAV_WriteBuffer(fp_out, write_data, CHANNELS * FRAME_SIZE);
+        frame_cnt++;
+    }
+    WAV_FillHeader(&header, FS, CHANNELS, frame_cnt * CHANNELS * FRAME_SIZE);
+    WAV_WriteHeader(fp_out, &header);
     fclose(fp_out);
+
+    fp_in = fopen(file_in, "rb");
+    if (!fp_in)
+    {
+        printf("Error: Could not open file %s \n", file_in);
+        return -1;
+    }
+
+    /*analyze the input wav head*/
+    WAV_AnalyzeHeader(fp_in, &header);
+
+    fseek(fp_in, WAVE_HEADER_SIZE, SEEK_SET);
+
+    WAV_ReadBuffer(fp_in, read_data, CHANNELS * FRAME_SIZE);
+
+    FILE *fp = fopen("1.txt", "w");
+    for (int i = 0; i < FRAME_SIZE; i++)
+    {
+        fprintf(fp, "%8d,%8d\n", write_data[i], read_data[i]);
+    }
+
+    fclose(fp_in);
+    fclose(fp);
+    free(read_data);
+    free(write_data);
 
     printf("process done\n");
     return 0;
 }
 
+#endif
+
+#if TEST_PCM32
+
+int main(int argc, char **argv)
+{
+    char *file_in = NULL;
+    char *file_out = NULL;
+    FILE *fp_in = NULL;
+    FILE *fp_out = NULL;
+
+    /* only read 16bit integer */
+    int *read_data = NULL;
+    int *write_data = NULL;
+    WAV_HEADER header = {0};
+    int frame_cnt = 0;
+    int n = 0;
+
+    /*give the fixed parameter*/
+    file_in = "TT.wav";
+    file_out = "TT.wav";
+
+    /*open the wav file*/
+    fp_out = fopen(file_out, "wb");
+    if (!fp_out)
+    {
+        printf("Error: Could not open file %s \n", file_out);
+        return -1;
+    }
+
+    read_data = malloc(CHANNELS * FRAME_SIZE * sizeof(int));
+    write_data = malloc(CHANNELS * FRAME_SIZE * sizeof(int));
+    pcm32_data_init(write_data, CHANNELS * FRAME_SIZE);
+
+    fseek(fp_out, WAVE_HEADER_SIZE, SEEK_SET);
+    frame_cnt = 0;
+    for (int i = 0; i < 10; i++)
+    {
+        WAV_WriteBuffer(fp_out, write_data, CHANNELS * FRAME_SIZE);
+        frame_cnt++;
+    }
+    WAV_FillHeader(&header, FS, CHANNELS, frame_cnt * CHANNELS * FRAME_SIZE);
+    WAV_WriteHeader(fp_out, &header);
+    fclose(fp_out);
+
+    fp_in = fopen(file_in, "rb");
+    if (!fp_in)
+    {
+        printf("Error: Could not open file %s \n", file_in);
+        return -1;
+    }
+
+    /*analyze the input wav head*/
+    WAV_AnalyzeHeader(fp_in, &header);
+
+    fseek(fp_in, WAVE_HEADER_SIZE, SEEK_SET);
+
+    WAV_ReadBuffer(fp_in, read_data, CHANNELS * FRAME_SIZE);
+
+    FILE *fp = fopen("1.txt", "w");
+    for (int i = 0; i < FRAME_SIZE; i++)
+    {
+        fprintf(fp, "%12d,%12d\n", write_data[i], read_data[i]);
+    }
+
+    fclose(fp_in);
+    fclose(fp);
+    free(read_data);
+    free(write_data);
+
+    printf("process done\n");
+    return 0;
+}
+#endif
 ```
 

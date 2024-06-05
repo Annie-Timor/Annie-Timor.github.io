@@ -314,3 +314,5 @@ end
 ④、加窗完成之后做FFT，做2048点的FFT。
 
 ⑤、在做了加窗之后，计算出来的声压级小于时域计算的，做一定的补偿，在加入的是2048点hamming窗时，相差3.937dB  ==>  尺度变换为1.573
+
+[github另一个参考](https://github.com/Annie-Timor/DSP_All/tree/master/sound_pressure_level)

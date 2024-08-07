@@ -133,12 +133,31 @@ x=rand(1024,1)./100;
 
 时域声压级的计算：
 
+时域声压级的计算基于均方根值（RMS）：
+
+$$
+\text{RMS} = \sqrt{\frac{1}{N} \sum_{i=0}^{N-1} x[i]^2}
+$$
+
+$$
+\text{SPL} = 20 \log_{10} \left(\frac{\text{RMS}}{P_{\text{ref}}}\right) 
+$$
+
 ```
 trms=sqrt(sum(x.^2)/N);
 tspl=20*log10(trms/1e-6);
 ```
 
 频域声压级的计算：
+
+频域声压级的计算基于FFT（快速傅里叶变换）后的功率谱密度：
+$$
+P[i] = \text{FFT}(x[i])
+$$
+
+$$
+\text{SPL}[i] = 10 \log_{10} \left( \frac{P[i]}{P_{\text{ref}}^2} \right)
+$$
 
 ```
 y=abs(fft(x,N))./N;
@@ -151,7 +170,149 @@ fspl=20*log10(frms/1e-6);
 ```
 y=abs(fft(x,N))./N;
 prms=sqrt(y.^2);
-pspl=20*log10(prms./1e-6);
+pspl=20*log10(prms*2./1e-6);
+```
+
+```c
+double FrequencyDomainSPL(const double *data, int len, SettingParams *params)
+{
+    static short freq_empty = 1;
+    double sum = 0;
+    double sound_level;
+    int i;
+
+	// if combine is empty, can't start calculating
+    if (freq_empty)
+    {
+        freq_empty = 0;
+        SPL_WindowsInit();
+        A_WeightScaleInit(FS, FFT_LEN, aweight_gain);
+        C_WeightScaleInit(FS, FFT_LEN, cweight_gain);
+
+        for (i = 0; i < HALF_LEN; i++)
+        {
+            x_combine[HALF_LEN + i] = data[i];
+        }
+
+        return TimeDomainSPL(data, len);
+    }
+
+    // data overlap
+    memcpy(&x_combine[0], &x_combine[HALF_LEN], HALF_LEN * sizeof(double));
+
+    for (i = 0; i < HALF_LEN; i++)
+    {
+        x_combine[HALF_LEN + i] = data[i];
+    }
+
+    /*对数据进行加窗操作*/
+    /*加窗之后需要针对窗函数做补偿*/
+    double win_scl = 1.0;
+    switch (params->windows)
+    {
+    case SPL_WINDOW_RECTANGULAR:
+        for (i = 0; i < FRAME_LEN; i++)
+        {
+            fx_in[i].real = x_combine[i];
+            fx_in[i].imag = 0;
+        }
+        win_scl = 1.0;
+        break;
+    case SPL_WINDOW_HANNING:
+        for (i = 0; i < FRAME_LEN; i++)
+        {
+            fx_in[i].real = x_combine[i] * hanning_win[i];
+            fx_in[i].imag = 0;
+        }
+        win_scl = 1.633;
+        break;
+    case SPL_WINDOW_HAMMING:
+        for (i = 0; i < FRAME_LEN; i++)
+        {
+            fx_in[i].real = x_combine[i] * hamming_win[i];
+            fx_in[i].imag = 0;
+        }
+        win_scl = 1.586;
+        break;
+    default:
+        my_printf("spl calculate windows error\n");
+        break;
+    }
+    /*做FFT变换*/
+    fft(fx_in, FFT_LEN);
+
+    /*
+    x=x.*win;
+    y=1.573*abs(fft(x,2*M))./(2*M);
+    frms=sqrt(sum(y.^2));
+    fspl(i)=20*log10(frms/1e-6);
+    */
+
+    /*做加权之后的处理*/
+    switch (params->weight)
+    {
+    case SPL_WEIGHT_Z:
+        break;
+    case SPL_WEIGHT_A:
+        /*A加权*/
+        for (i = 0; i < FFT_LEN; i++)
+        {
+            fx_in[i].real = fx_in[i].real * aweight_gain[i];
+            fx_in[i].imag = fx_in[i].imag * aweight_gain[i];
+        }
+        break;
+    case SPL_WEIGHT_C:
+        /*C加权*/
+        for (i = 0; i < FFT_LEN; i++)
+        {
+            fx_in[i].real = fx_in[i].real * cweight_gain[i];
+            fx_in[i].imag = fx_in[i].imag * cweight_gain[i];
+        }
+        break;
+    default:
+        break;
+    }
+
+    /*计算出总声压级和每个频点的声压级*/
+    // for (i = 0; i < FFT_LEN; i++)
+    // {
+    //     frms[i] = win_scl * AMPLITUDE(fx_in[i]) / FFT_LEN;
+    //     frms[i] = frms[i] * frms[i];
+    //     sum += frms[i];
+    // }
+    /*等同于下面的计算,直流分量和最大值为原来的N倍，其他为N/2倍*/
+    sum = 0;
+    for (i = 0; i <= FFT_LEN / 2; i++)
+    {
+        // 1、 计算出和时域相同的幅度值
+        frms[i] = AMPLITUDE(fx_in[i]) / FFT_LEN;
+        // 2、 加窗之后补偿窗函数因子（功率谱相等）
+        frms[i] = win_scl * frms[i];
+        // 3、 计算出功率谱
+        frms[i] = frms[i] * frms[i];
+        // 4、 对于实数信号需要做单侧谱转换
+        if ((i > 0) && (i < FFT_LEN / 2))
+        {
+            frms[i] *= 2;
+        }
+        // 5、 加成总和，计算总声压级
+        sum += frms[i];
+    }
+
+    /*幅值/(FFT_LEN/2)=该频点的真实幅值*/
+    // 计算出声压级 10 * log10(P/P_ref^2)
+    // == 20 * log10(sqrt(P)/P_ref)
+    // sound_level = 20 * log10(MAX(sqrt(sum), 1e-10) / 1e-6);
+    sound_level = 10 * log10(sum / (1e-12));
+    /*每个频点的声压级，后一半的点和前面对称*/
+    for (int i = 0; i <= FFT_LEN / 2; i++)
+    {
+        // fspl[i] = 20 * log10(MAX(sqrt(frms[i]), 1e-10) / 1e-6);
+        fspl[i] = 10 * log10(frms[i] / 1e-12);
+    }
+
+    return sound_level;
+}
 ```
 
 
@@ -314,5 +475,7 @@ end
 ④、加窗完成之后做FFT，做2048点的FFT。
 
 ⑤、在做了加窗之后，计算出来的声压级小于时域计算的，做一定的补偿，在加入的是2048点hamming窗时，相差3.937dB  ==>  尺度变换为1.573
+
+⑥、对于实数序列，在做FFT之后计算幅值需要考虑单侧谱转换，因为左右两边对称，需要将两边相加起来。
 
 [github另一个参考](https://github.com/Annie-Timor/DSP_All/tree/master/sound_pressure_level)

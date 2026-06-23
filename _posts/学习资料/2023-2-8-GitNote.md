@@ -530,3 +530,114 @@ $ git check-ignore -v App.class
 
 ```
 
+## 提交规范
+
+给你一套**工程级 commit message 规范**（非常实用）：
+
+```text
+<module>: <type> <short description>
+```
+
+**推荐模块名：**
+> - algorithm
+> - platform
+> - driver
+> - app
+> - tools
+> - docs
+> - build
+> - test
+
+**推荐 type：**
+
+> - feat：新功能
+> - fix：修 bug
+> - refactor：重构
+> - perf：性能优化
+> - chore：工程杂项
+
+**示例**：
+
+```bash
+git commit -m "algorithm: perf optimize WDRC gain smoothing"
+git commit -m "platform: fix DMA underrun on BES2700"
+git commit -m "docs: add WDRC tuning notes"
+git commit -m "tools: add log parser script"
+```
+
+👉 日后你 `git log` 一看就知道是谁、改了哪个模块、干了啥。
+
+------
+
+### 一个 commit 里能不能改多个模块？
+
+#### ✅ 允许的情况（合理）
+
+当且仅当：
+
+> 🔗 **这是一个“跨模块的同一件事”**
+
+比如：
+
+- 算法接口变更 → 平台适配
+- 协议升级 → 工具同步升级
+
+这种 commit 可以写：
+
+```bash
+git commit -m "algorithm/platform: update audio frame interface v2"
+```
+
+或者：
+
+```bash
+git commit -m "feat: update audio pipeline interface (algorithm + platform)"
+```
+
+------
+
+#### ❌ 不合理的情况（会让历史变脏）
+
+- 顺手改了点算法
+- 顺手修了个文档 typo
+- 顺手调了下工具脚本
+
+👉 这种必须拆 commit。
+
+------
+
+### 五、工程实践中“怎么避免手滑 add .”
+
+#### 强烈建议你养成这几个习惯：
+
+✅ 1. 永远先看 `git status`
+
+```bash
+git status
+```
+
+------
+
+✅ 2. 用路径 add，而不是 `git add .`
+
+```bash
+git add algorithm/
+git add platform_bes/
+git add docs/
+```
+
+------
+
+✅ 3. 使用交互式暂存（高级但很香）
+
+```bash
+git add -p
+```
+
+可以逐块选择：
+
+```text
+Stage this hunk [y,n,q,a,d,s,e,?]?
+```
+
+👉 非常适合“一个文件改了多件事”的场景
